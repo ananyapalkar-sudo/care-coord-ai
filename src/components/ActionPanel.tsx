@@ -1,8 +1,9 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
+import { supabase } from "@/integrations/supabase/client";
 import { 
   Calendar, 
   MessageSquare, 
@@ -12,7 +13,8 @@ import {
   Clock,
   CheckCircle,
   Play,
-  Pause
+  Pause,
+  Loader2
 } from "lucide-react";
 
 interface Patient {
@@ -31,46 +33,74 @@ interface ActionPanelProps {
 export const ActionPanel = ({ patient }: ActionPanelProps) => {
   const [executingActions, setExecutingActions] = useState<string[]>([]);
   const [completedActions, setCompletedActions] = useState<string[]>([]);
+  const [actions, setActions] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
   const { toast } = useToast();
 
-  const actions = [
-    {
-      id: "notify_doctor",
-      type: "notify_doctor",
-      method: "slack_api",
-      message: `Critical glucose alert for ${patient.name}`,
-      icon: Slack,
-      priority: "high",
-      estimated_time: "< 1 min"
-    },
-    {
-      id: "schedule_followup", 
-      type: "schedule_followup",
-      method: "google_calendar",
-      date: "2025-09-22T10:00:00",
-      icon: Calendar,
-      priority: "high",
-      estimated_time: "2-3 min"
-    },
-    {
-      id: "notify_patient",
-      type: "notify_patient", 
-      method: "twilio_sms",
-      message: "Please see your doctor urgently. Appointment booked.",
-      icon: MessageSquare,
-      priority: "medium",
-      estimated_time: "< 1 min"
-    },
-    {
-      id: "email_summary",
-      type: "email_summary",
-      method: "sendgrid_api", 
-      message: "Lab results summary and next steps",
-      icon: Mail,
-      priority: "low",
-      estimated_time: "1-2 min"
-    }
-  ];
+  useEffect(() => {
+    const fetchActions = async () => {
+      try {
+        setLoading(true);
+        
+        const { data, error } = await supabase.functions.invoke('analyze-patient', {
+          body: { patient }
+        });
+
+        if (error) {
+          throw new Error(error.message);
+        }
+
+        // Transform Gemini actions to include UI properties
+        const transformedActions = (data.actions || []).map((action: any, index: number) => ({
+          id: `${action.type}_${index}`,
+          type: action.type,
+          method: action.method,
+          message: action.message,
+          priority: action.priority || "medium",
+          estimated_time: action.estimated_time || "2-3 min",
+          icon: getIconForActionType(action.type)
+        }));
+
+        setActions(transformedActions);
+      } catch (err) {
+        console.error('Failed to fetch actions:', err);
+        toast({
+          title: "Error",
+          description: "Failed to load AI-generated actions",
+          variant: "destructive"
+        });
+        // Fallback actions
+        setActions([
+          {
+            id: "manual_review",
+            type: "manual_review",
+            method: "manual",
+            message: "Manual review recommended",
+            icon: CheckCircle,
+            priority: "medium",
+            estimated_time: "5-10 min"
+          }
+        ]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    fetchActions();
+  }, [patient, toast]);
+
+  const getIconForActionType = (type: string) => {
+    const iconMap: { [key: string]: any } = {
+      notify_doctor: Slack,
+      schedule_followup: Calendar,
+      notify_patient: MessageSquare,
+      email_summary: Mail,
+      call_patient: Phone,
+      manual_review: CheckCircle,
+      review_needed: CheckCircle
+    };
+    return iconMap[type] || CheckCircle;
+  };
 
   const executeAction = async (actionId: string) => {
     setExecutingActions(prev => [...prev, actionId]);
@@ -114,17 +144,39 @@ export const ActionPanel = ({ patient }: ActionPanelProps) => {
     }
   };
 
+  if (loading) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center space-x-2">
+            <Play className="h-5 w-5 text-primary" />
+            <span>Automated Actions</span>
+            <Loader2 className="h-4 w-4 animate-spin text-primary" />
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-center py-8">
+            <div className="text-center">
+              <Loader2 className="h-8 w-8 animate-spin text-primary mx-auto mb-2" />
+              <p className="text-sm text-muted-foreground">Loading AI-generated actions...</p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
   return (
     <Card>
       <CardHeader>
         <div className="flex items-center justify-between">
           <CardTitle className="flex items-center space-x-2">
             <Play className="h-5 w-5 text-primary" />
-            <span>Automated Actions</span>
+            <span>Gemini AI Actions</span>
           </CardTitle>
           <Button 
             onClick={executeAllActions}
-            disabled={actions.length === completedActions.length}
+            disabled={actions.length === completedActions.length || actions.length === 0}
             className="text-sm"
           >
             Execute All Actions
@@ -199,8 +251,8 @@ export const ActionPanel = ({ patient }: ActionPanelProps) => {
         
         <div className="mt-4 p-3 bg-secondary/30 rounded-lg">
           <p className="text-xs text-muted-foreground">
-            <strong>Note:</strong> Actions are executed via secure API integrations with FHIR-compliant systems. 
-            All patient data remains encrypted and follows HIPAA guidelines.
+            <strong>Note:</strong> Actions are generated by Gemini AI based on patient analysis. 
+            Simulated execution for demonstration purposes. Real implementation would integrate with healthcare APIs.
           </p>
         </div>
       </CardContent>

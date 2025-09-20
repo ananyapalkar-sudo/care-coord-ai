@@ -1,7 +1,9 @@
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { AlertTriangle, TrendingUp, Activity, Brain } from "lucide-react";
+import { AlertTriangle, TrendingUp, Activity, Brain, Loader2 } from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
 
 interface Patient {
   id: string;
@@ -17,49 +19,64 @@ interface AnalysisResultsProps {
 }
 
 export const AnalysisResults = ({ patient }: AnalysisResultsProps) => {
-  const generateAnalysis = () => {
-    const criticalResults = Object.entries(patient.labResults).filter(
-      ([_, result]: [string, any]) => result.status === "critical"
-    );
-    
-    const warningResults = Object.entries(patient.labResults).filter(
-      ([_, result]: [string, any]) => result.status === "warning"
-    );
+  const [analysis, setAnalysis] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-    if (criticalResults.length > 0) {
-      return {
-        severity: "critical",
-        analysis: "Patient glucose is critically high at 180 mg/dL (normal: 70-100). Immediate intervention required.",
-        confidence: 95,
-        actions: [
-          { type: "notify_doctor", method: "slack_api", message: "Critical glucose alert for " + patient.name },
-          { type: "schedule_followup", method: "google_calendar", date: "2025-09-22T10:00:00" },
-          { type: "notify_patient", method: "twilio_sms", message: "Please see your doctor urgently. Appointment booked." }
-        ]
-      };
-    } else if (warningResults.length > 0) {
-      return {
-        severity: "warning",
-        analysis: "Elevated cholesterol (240 mg/dL) and blood pressure (150/95) require monitoring and follow-up.",
-        confidence: 87,
-        actions: [
-          { type: "schedule_followup", method: "google_calendar", date: "2025-09-30T14:00:00" },
-          { type: "notify_patient", method: "email", message: "Please schedule a follow-up for your recent lab results." }
-        ]
-      };
-    }
-    
-    return {
-      severity: "routine",
-      analysis: "All lab results within normal parameters. Continue current treatment plan.",
-      confidence: 92,
-      actions: [
-        { type: "schedule_routine_checkup", method: "google_calendar", date: "2025-12-15T10:00:00" }
-      ]
+  useEffect(() => {
+    const analyzePatient = async () => {
+      try {
+        setLoading(true);
+        setError(null);
+        
+        const { data, error: functionError } = await supabase.functions.invoke('analyze-patient', {
+          body: { patient }
+        });
+
+        if (functionError) {
+          throw new Error(functionError.message);
+        }
+
+        setAnalysis(data);
+      } catch (err) {
+        console.error('Analysis error:', err);
+        setError(err instanceof Error ? err.message : 'Analysis failed');
+        // Fallback analysis
+        setAnalysis({
+          severity: "routine",
+          analysis: "Unable to connect to AI analysis service. Using basic assessment.",
+          confidence: 50,
+          actions: []
+        });
+      } finally {
+        setLoading(false);
+      }
     };
-  };
 
-  const analysis = generateAnalysis();
+    analyzePatient();
+  }, [patient]);
+
+  if (loading) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center space-x-2">
+            <Brain className="h-5 w-5 text-primary" />
+            <span>AI Analysis Results</span>
+            <Loader2 className="h-4 w-4 animate-spin text-primary" />
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="flex items-center justify-center py-8">
+            <div className="text-center">
+              <Loader2 className="h-8 w-8 animate-spin text-primary mx-auto mb-2" />
+              <p className="text-sm text-muted-foreground">Analyzing patient data with Gemini AI...</p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
   
   const severityColors = {
     critical: "bg-critical text-critical-foreground",
@@ -131,13 +148,20 @@ export const AnalysisResults = ({ patient }: AnalysisResultsProps) => {
         </div>
 
         <div className="bg-secondary/50 p-4 rounded-lg">
-          <h4 className="font-medium text-foreground mb-2">Generated JSON Response</h4>
+          <h4 className="font-medium text-foreground mb-2">Gemini AI Response</h4>
           <pre className="text-xs text-muted-foreground overflow-x-auto">
 {JSON.stringify({
   analysis: analysis.analysis,
+  severity: analysis.severity,
+  confidence: analysis.confidence,
   actions: analysis.actions
 }, null, 2)}
           </pre>
+          {error && (
+            <div className="mt-2 text-xs text-warning">
+              Note: {error}
+            </div>
+          )}
         </div>
       </CardContent>
     </Card>
